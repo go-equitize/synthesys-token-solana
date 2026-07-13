@@ -13,13 +13,6 @@ mint** at creation and **fixed for the life of the mint**:
 Both share the same code, roles, force-ops, pause, and CCIP wiring — the only difference is whether
 the whitelist is enforced, and that choice is made once and cannot be changed later.
 
-> **Status:** builds clean (`anchor build`), full dual-mode test suite passing on localnet (62
-> tests across nine spec files). **Not yet deployed to a public cluster.** The whitelist-switch
-> surface has not been through the security audit that covered its predecessor programs — treat as
-> pre-audit. See `docs/DESIGN-DOC.md` for the full design, compromises, and trust assumptions.
-
-Program ID (dev keypair): `7rCrfZnJakWfGfUmHovVGWFvwxnELfxnXzebmatjXeHp` — regenerate for your own
-deployment.
 
 ---
 
@@ -195,11 +188,11 @@ CCIP pool and router setup.
 
 ---
 
-## Security & trust (read `docs/DESIGN-DOC.md`)
+## Security & trust (read `DESIGN-DOC.md`)
 
 This program mirrors the EVM contracts' **powerful, centralized admin** model, not a trust-minimized
 one: `ADMIN_ROLE` can pause, freeze, seize (`force_burn`), and force-move (`forced_transfer`) any
 funds; `MINTER_ROLE` is uncapped; the **program upgrade authority outranks everything** — including
 the whitelist-mode immutability guarantee — and is the true root of trust. Hold `ADMIN_ROLE`,
 `DEFAULT_ADMIN_ROLE`, and the upgrade authority in a multisig + timelock. CCIP's programs are a
-separate trusted system. See `docs/DESIGN-DOC.md` §10 for the complete list.
+separate trusted system. See `DESIGN-DOC.md` §10 for the complete list.
