@@ -1,0 +1,24 @@
+[package]
+name = "synthesys-token"
+version = "0.1.0"
+description = "Synthesys Token - Compliant Token-2022 with CCIP support and per-mint optional whitelist. Superset of rwa-token / z-token."
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "synthesys_token"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+
+[dependencies]
+anchor-lang = { version = "0.31.1", features = ["init-if-needed", "interface-instructions"] }
+anchor-spl = { version = "0.31.1", features = ["token_2022", "token", "associated_token"] }
+# Required for transfer hook ExtraAccountMetaList setup
+spl-tlv-account-resolution = "0.6.3"
+spl-transfer-hook-interface = "0.6.3"
