@@ -13,10 +13,10 @@ mint** at creation and **fixed for the life of the mint**:
 Both share the same code, roles, force-ops, pause, and CCIP wiring — the only difference is whether
 the whitelist is enforced, and that choice is made once and cannot be changed later.
 
-> **Status:** builds clean (`anchor build`), full dual-mode test suite passing on localnet (60
-> tests). **Not yet deployed to a public cluster.** The whitelist-switch surface has not been
-> through the security audit that covered its predecessor programs — treat as pre-audit. See
-> `DESIGN-DOC.md` for the full design, compromises, and trust assumptions.
+> **Status:** builds clean (`anchor build`), full dual-mode test suite passing on localnet (62
+> tests across nine spec files). **Not yet deployed to a public cluster.** The whitelist-switch
+> surface has not been through the security audit that covered its predecessor programs — treat as
+> pre-audit. See `docs/DESIGN-DOC.md` for the full design, compromises, and trust assumptions.
 
 Program ID (dev keypair): `7rCrfZnJakWfGfUmHovVGWFvwxnELfxnXzebmatjXeHp` — regenerate for your own
 deployment.
@@ -72,7 +72,7 @@ or force-move funds when regulation requires it. Three ideas do most of the work
 | `TransferHook → this program` | Lets the program vet every transfer (pause + per-owner compliance). |
 | `PermanentDelegate → authority PDA` | Lets the program force-burn / force-move any account. |
 | `FreezeAuthority → authority PDA` | Lets the program freeze/thaw to enforce compliance state. |
-| `MintAuthority → authority PDA` | Program mints; later handed to the CCIP pool once bridging is wired. |
+| `MintAuthority → authority PDA` | Program mints; later handed to a delegated authority (e.g. a Squads vault or an SPL Multisig co-signed by the CCIP pool signer) once bridging is wired. |
 
 Compliance lists aren't separate contracts — **membership is just the existence of a small PDA**
 (whitelist / blocklist / role) inside the program. Nothing to swap, no external calls in the hot path.
@@ -95,6 +95,10 @@ code changes.
 `initialize` bootstraps one admin key with all four roles; split them later by granting narrower
 roles. The admin key(s) are fully trusted — they can pause, freeze, and move any balance.
 
+`token_config` tracks live counts of `DEFAULT_ADMIN_ROLE` and `ADMIN_ROLE` holders, and
+`revoke_role` refuses to drop either below one — so role administration can never be permanently
+bricked by revoking the last admin.
+
 ---
 
 ## Compliance in practice
@@ -110,8 +114,8 @@ roles. The admin key(s) are fully trusted — they can pause, freeze, and move a
 Main instructions: `initialize`, `initialize_extra_account_meta_list`, `add/remove_whitelist`
 (whitelisted mints only), `add/remove_blocklist`, `mint`, `burn_self/account/from`, `force_burn`,
 `forced_transfer`, `pause/unpause`, `grant/revoke_role`, `transfer_mint_authority`,
-`thaw_token_account`, `approve_tokens`, `set_ccip_router`, `pre_bridge_send`, `post_bridge_restore`,
-`update_transfer_hook_program`, and the transfer-hook `fallback`.
+`thaw_token_account`, `approve_tokens`, `set_ccip_admin`, `set_ccip_router`, `pre_bridge_send`,
+`post_bridge_restore`, and the transfer-hook `fallback`.
 
 ---
 
@@ -139,8 +143,9 @@ compliance stays enforced throughout.
 For a whitelisted mint, inbound recipients must be whitelisted first (delivery mint honors the
 allow-list), or the delivery mint reverts on the destination.
 
-Once bridging is fully wired, mint authority is handed to the CCIP pool, so **the program can no
-longer mint locally** — new tokens appear on Solana only by bridging in from EVM.
+Once bridging is fully wired, mint authority is handed off to a delegated authority co-signed by the
+CCIP pool signer (via `transfer_mint_authority`), so **the program can no longer mint locally** — new
+tokens appear on Solana only by bridging in from EVM.
 
 ---
 
@@ -156,13 +161,13 @@ solana program deploy -u localhost \
   --program-id target/deploy/synthesys_token-keypair.json \
   target/deploy/synthesys_token.so
 ANCHOR_PROVIDER_URL=http://127.0.0.1:8899 ANCHOR_WALLET=~/.config/solana/id.json \
-  yarn ts-mocha -p ./tsconfig.json -t 1000000 tests/synthesys-token.ts
+  yarn test          # runs tests/synthesys-token/*.spec.ts via ts-mocha
 ```
 
-The suite (`tests/synthesys-token.ts` + `tests/synthesys-helpers.ts`) stands up two mints — whitelist
-enabled and disabled — and exercises every instruction against both, with heavy focus on the
-pass/omit-whitelist-PDA matrix, `transfer_checked` through the hook, and the admin-only + full-bypass
-guarantees for `forced_transfer` / `force_burn`.
+The suite lives in `tests/synthesys-token/` — nine spec files (`01-config-lists` … `09-bridge`)
+sharing `fixtures.ts`. It stands up two mints — whitelist enabled and disabled — and exercises every
+instruction against both, with heavy focus on the pass/omit-whitelist-PDA matrix, `transfer_checked`
+through the hook, and the admin-only + full-bypass guarantees for `forced_transfer` / `force_burn`.
 
 ### Dependencies
 - `anchor-lang` / `anchor-spl` `0.31.1` (Token-2022 + associated-token features)
@@ -174,20 +179,27 @@ guarantees for `forced_transfer` / `force_burn`.
 ## Repo layout (standalone)
 
 ```
-programs/synthesys-token/   the program (lib.rs, context.rs, state.rs, instructions/, …)
-tests/                      dual-mode test suite
-scripts/                    Solana + EVM tooling (token, pool, admin, router)   [port as needed]
-docs/                       guides and runbooks                                 [port as needed]
-DESIGN-DOC.md               full design, compromises, trust assumptions
+programs/synthesys-token/     the program (lib.rs, context.rs, state.rs, instructions/, …)
+tests/synthesys-token/        dual-mode test suite (nine *.spec.ts files + fixtures.ts)
+scripts/svm/synthesys-token/  numbered deploy/operate flow (1_create-mint … 8_bridge-send)
+scripts/svm/{token,pool,router,admin}/  CCIP router + burn-mint pool tooling
+scripts/evm/                  EVM-side rwa-token / z-token / router scripts
+docs/                         guides and runbooks (DESIGN-DOC, bridge runbooks, audit reports)
+docs/DESIGN-DOC.md            full design, compromises, trust assumptions
 ```
+
+The `syn:*` npm scripts in `package.json` wrap the numbered Solana flow
+(`syn:create-mint`, `syn:initialize`, `syn:set-ccip-router`, `syn:whitelist`, `syn:thaw`, `syn:mint`,
+`syn:handoff-to-pool`, `syn:bridge-send`); `svm:pool:*` / `svm:router:*` / `svm:token:*` wrap the
+CCIP pool and router setup.
 
 ---
 
-## Security & trust (read `DESIGN-DOC.md`)
+## Security & trust (read `docs/DESIGN-DOC.md`)
 
 This program mirrors the EVM contracts' **powerful, centralized admin** model, not a trust-minimized
 one: `ADMIN_ROLE` can pause, freeze, seize (`force_burn`), and force-move (`forced_transfer`) any
 funds; `MINTER_ROLE` is uncapped; the **program upgrade authority outranks everything** — including
 the whitelist-mode immutability guarantee — and is the true root of trust. Hold `ADMIN_ROLE`,
 `DEFAULT_ADMIN_ROLE`, and the upgrade authority in a multisig + timelock. CCIP's programs are a
-separate trusted system. See `DESIGN-DOC.md` §10 for the complete list.
+separate trusted system. See `docs/DESIGN-DOC.md` §10 for the complete list.
