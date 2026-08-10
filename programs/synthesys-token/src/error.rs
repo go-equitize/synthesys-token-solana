@@ -130,4 +130,40 @@ pub enum SynthesysTokenError {
     /// left who could grant/revoke roles or administer pause/lists/force-ops).
     #[msg("Cannot revoke the last remaining holder of this role")]
     LastAdminCannotBeRevoked,
+
+    /// In-window ccip_send debits an account other than the declared source_token_account.
+    #[msg("Router ccip_send does not debit the declared source token account")]
+    BridgeSourceAccountMismatch,
+
+    /// In-window ccip_send account layout / token routing is not the expected shape.
+    #[msg("Unexpected ccip_send account layout in bridge window")]
+    UnexpectedCcipSendAccountLayout,
+
+    /// More than one ccip_send between pre_bridge_send and post_bridge_restore.
+    #[msg("Multiple ccip_send calls are not allowed in a single bridge window")]
+    MultipleSendsInBridgeWindow,
+
+    /// Bridge window contained no ccip_send.
+    #[msg("Bridge window contained no ccip_send")]
+    BridgeSendMissing,
+
+    /// pre_bridge_send invoked as a CPI; the sysvar walker only sees top-level ixs.
+    #[msg("pre_bridge_send must be a top-level instruction, not a CPI")]
+    BridgeCallerMustBeTopLevel,
+
+    /// The mint carries a Token-2022 extension outside the compliant allow-list
+    /// (e.g. TransferFeeConfig / InterestBearingConfig) — could break the 1:1 supply
+    /// invariant or transfer semantics this program cannot account for.
+    #[msg("Mint carries a disallowed Token-2022 extension")]
+    DisallowedMintExtension,
+
+    /// The transfer hook was invoked outside a Token-2022 transfer (source account's
+    /// `transferring` flag is unset) — reject direct/standalone calls.
+    #[msg("Transfer hook may only run during a Token-2022 transfer")]
+    HookNotInTransfer,
+
+    /// accept_mint_authority was called by a key that is not the pending candidate
+    /// (or no candidate has been proposed).
+    #[msg("Caller is not the pending mint authority")]
+    NotPendingMintAuthority,
 }

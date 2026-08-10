@@ -39,7 +39,7 @@ async function main() {
   const amountStr = process.env.AMOUNT;
   const evmReceiver = process.env.EVM_RECEIVER;
   if (!amountStr || !evmReceiver) throw new Error("Set AMOUNT and EVM_RECEIVER");
-  const decimals = Number(process.env.SYN_TOKEN_DECIMALS || "18");
+  const decimals = Number(process.env.SYN_TOKEN_DECIMALS || "9");
 
   const SYN = programId();
   const mint = mintPk();

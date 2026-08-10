@@ -7,6 +7,7 @@ use crate::{
     context::{AddBlocklist, RemoveBlocklist},
     error::SynthesysTokenError,
     events::{AddressBlocklisted, AddressRemovedFromBlocklist},
+    util::freeze_owner_token_accounts,
 };
 
 /// Mirrors: function addBlocklistAccount(address account) public onlyRole(ADMIN) in Blocklist.sol
@@ -16,7 +17,10 @@ use crate::{
 /// On Solana, we freeze immediately for equivalent real-time enforcement.
 ///
 /// Blocklist enforcement is identical regardless of `whitelist_enabled`.
-pub fn add_blocklist_handler(ctx: Context<AddBlocklist>, account: Pubkey) -> Result<()> {
+pub fn add_blocklist_handler<'info>(
+    ctx: Context<'_, '_, '_, 'info, AddBlocklist<'info>>,
+    account: Pubkey,
+) -> Result<()> {
     // Anchor's `init` ensures the blocklist PDA does not already exist.
     // Mirrors: require(!_blocklisted[account], AccountAlreadyBlocklisted(account))
 
@@ -28,11 +32,12 @@ pub fn add_blocklist_handler(ctx: Context<AddBlocklist>, account: Pubkey) -> Res
         SynthesysTokenError::TokenAccountOwnerMismatch
     );
 
+    let mint_key = ctx.accounts.mint.key();
+    let authority_bump = ctx.accounts.token_config.authority_bump;
+
     // Freeze the token account immediately.
     // Already-frozen accounts are a no-op; we skip if already frozen.
     if ctx.accounts.target_token_account.state != AccountState::Frozen {
-        let mint_key = ctx.accounts.mint.key();
-        let authority_bump = ctx.accounts.token_config.authority_bump;
         let signer_seeds: &[&[&[u8]]] = &[&[
             AUTHORITY_SEED,
             mint_key.as_ref(),
@@ -51,6 +56,17 @@ pub fn add_blocklist_handler(ctx: Context<AddBlocklist>, account: Pubkey) -> Res
             ),
         )?;
     }
+
+    // Freeze any sibling token accounts the owner holds for this mint, passed as
+    // remaining accounts — the owner-keyed blocklist must cover all of them.
+    freeze_owner_token_accounts(
+        ctx.remaining_accounts,
+        &ctx.accounts.mint.to_account_info(),
+        &ctx.accounts.authority_pda.to_account_info(),
+        &ctx.accounts.token_program.to_account_info(),
+        account,
+        authority_bump,
+    )?;
 
     emit!(AddressBlocklisted { account });
     Ok(())

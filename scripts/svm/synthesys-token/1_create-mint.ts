@@ -15,7 +15,7 @@
  *   SYN_TOKEN_NAME         metadata name   (e.g. "RWAToken")
  *   SYN_TOKEN_SYMBOL       metadata symbol (e.g. "RWA")
  *   SYN_TOKEN_URI          metadata uri    (optional)
- *   SYN_TOKEN_DECIMALS     decimals (default 18, to match the EVM twin)
+ *   SYN_TOKEN_DECIMALS     decimals (default 9)
  *   SYN_ENV_FILE           path to write the resulting addresses (e.g. .env-synthesys-rwa)
  *
  * Run:
@@ -55,7 +55,7 @@ const SYN_TOKEN_PROGRAM_ID = new PublicKey(
   process.env.SYN_TOKEN_PROGRAM_ID || "7rCrfZnJakWfGfUmHovVGWFvwxnELfxnXzebmatjXeHp"
 );
 
-const TOKEN_DECIMALS = parseInt(process.env.SYN_TOKEN_DECIMALS || "18", 10);
+const TOKEN_DECIMALS = parseInt(process.env.SYN_TOKEN_DECIMALS || "9", 10);
 const TOKEN_NAME = process.env.SYN_TOKEN_NAME || "Synthesys Token";
 const TOKEN_SYMBOL = process.env.SYN_TOKEN_SYMBOL || "SYN";
 const TOKEN_URI = process.env.SYN_TOKEN_URI || "";

@@ -98,6 +98,15 @@ pub mod SynthesysToken {
         initialize_handler(ctx, admin, ccip_admin, whitelist_enabled)
     }
 
+    /// Seats a bootstrapped initializer authority (once) so future mints can be onboarded
+    /// even after the program upgrade authority is revoked. Gated to the upgrade authority.
+    pub fn set_initializer_authority(
+        ctx: Context<SetInitializerAuthority>,
+        initializer_authority: Pubkey,
+    ) -> Result<()> {
+        set_initializer_authority_handler(ctx, initializer_authority)
+    }
+
     /// Creates the ExtraAccountMetaList PDA used by the Token-2022 transfer hook.
     /// Must be called once after initialize() and before any transfers.
     pub fn initialize_extra_account_meta_list(
@@ -114,12 +123,18 @@ pub mod SynthesysToken {
 
     /// Mirrors: removeWhitelistAccount(address account)
     /// Rejected with `WhitelistNotEnabled` when the mint has whitelist disabled.
-    pub fn remove_whitelist(ctx: Context<RemoveWhitelist>, account: Pubkey) -> Result<()> {
+    pub fn remove_whitelist<'info>(
+        ctx: Context<'_, '_, '_, 'info, RemoveWhitelist<'info>>,
+        account: Pubkey,
+    ) -> Result<()> {
         remove_whitelist_handler(ctx, account)
     }
 
     /// Mirrors: addBlocklistAccount(address account)
-    pub fn add_blocklist(ctx: Context<AddBlocklist>, account: Pubkey) -> Result<()> {
+    pub fn add_blocklist<'info>(
+        ctx: Context<'_, '_, '_, 'info, AddBlocklist<'info>>,
+        account: Pubkey,
+    ) -> Result<()> {
         add_blocklist_handler(ctx, account)
     }
 
@@ -203,6 +218,23 @@ pub mod SynthesysToken {
         new_mint_authority: Pubkey,
     ) -> Result<()> {
         transfer_mint_authority_handler(ctx, new_mint_authority)
+    }
+
+    /// Two-step mint-authority handoff, step 1 (propose). ADMIN_ROLE-gated. Records
+    /// `candidate` in `token_config.pending_mint_authority`; authority_pda keeps MintTokens
+    /// until the candidate accepts, so a mistyped destination is recoverable. Use for
+    /// destinations that can sign; use `transfer_mint_authority` for PDA pool signers.
+    pub fn propose_mint_authority(
+        ctx: Context<ProposeMintAuthority>,
+        candidate: Pubkey,
+    ) -> Result<()> {
+        propose_mint_authority_handler(ctx, candidate)
+    }
+
+    /// Two-step mint-authority handoff, step 2 (accept). The pending candidate signs to
+    /// claim MintTokens; the authority moves only on their confirmation.
+    pub fn accept_mint_authority(ctx: Context<AcceptMintAuthority>) -> Result<()> {
+        accept_mint_authority_handler(ctx)
     }
 
     /// Opens a compliance-checked, atomically-paired window during which the

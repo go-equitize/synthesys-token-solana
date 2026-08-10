@@ -6,7 +6,7 @@ use anchor_spl::{
 
 use crate::{
     constants::*,
-    state::{BlocklistEntry, RoleEntry, TokenConfig, WhitelistEntry},
+    state::{BlocklistEntry, ProgramConfig, RoleEntry, TokenConfig, WhitelistEntry},
 };
 
 /// A note on optional whitelist accounts
@@ -103,6 +103,45 @@ pub struct Initialize<'info> {
     /// This program's ProgramData account. The handler requires
     /// `program_data.upgrade_authority_address == authority` so that only the deployer
     /// (upgrade authority) can initialize — closing the init front-running window.
+    #[account(
+        seeds = [crate::ID.as_ref()],
+        bump,
+        seeds::program = anchor_lang::solana_program::bpf_loader_upgradeable::ID,
+    )]
+    pub program_data: Account<'info, ProgramData>,
+
+    /// Optional bootstrap config. When present, the handler also accepts
+    /// `program_config.initializer_authority` as `authority` — so onboarding still works
+    /// after the upgrade authority is revoked.
+    #[account(
+        seeds = [PROGRAM_CONFIG_SEED],
+        bump = program_config.bump,
+    )]
+    pub program_config: Option<Account<'info, ProgramConfig>>,
+
+    pub system_program: Program<'info, System>,
+}
+
+/// Sets the bootstrapped initializer authority (once). Gated to the current upgrade
+/// authority; call before revoking it if not all mints are onboarded yet.
+#[derive(Accounts)]
+pub struct SetInitializerAuthority<'info> {
+    /// Must equal the current program upgrade authority.
+    pub authority: Signer<'info>,
+
+    /// Funds creation of `program_config`.
+    #[account(mut)]
+    pub payer: Signer<'info>,
+
+    #[account(
+        init,
+        payer = payer,
+        space = 8 + ProgramConfig::INIT_SPACE,
+        seeds = [PROGRAM_CONFIG_SEED],
+        bump,
+    )]
+    pub program_config: Account<'info, ProgramConfig>,
+
     #[account(
         seeds = [crate::ID.as_ref()],
         bump,
@@ -919,6 +958,59 @@ pub struct TransferMintAuthority<'info> {
     pub role_entry: Account<'info, RoleEntry>,
 
     #[account(
+        seeds = [TOKEN_CONFIG_SEED, mint.key().as_ref()],
+        bump = token_config.bump,
+    )]
+    pub token_config: Account<'info, TokenConfig>,
+
+    /// CHECK: Authority PDA — current mint authority (will sign SetAuthority CPI).
+    #[account(
+        seeds = [AUTHORITY_SEED, mint.key().as_ref()],
+        bump = token_config.authority_bump,
+    )]
+    pub authority_pda: UncheckedAccount<'info>,
+
+    #[account(mut)]
+    pub mint: InterfaceAccount<'info, Mint>,
+
+    pub token_program: Interface<'info, TokenInterface>,
+}
+
+/// Two-step mint-authority handoff — step 1 (propose). ADMIN_ROLE records a candidate in
+/// `token_config.pending_mint_authority`; authority_pda keeps MintTokens until the
+/// candidate accepts. Complements the one-step `transfer_mint_authority` for destinations
+/// that can sign an accept.
+#[derive(Accounts)]
+pub struct ProposeMintAuthority<'info> {
+    pub signer: Signer<'info>,
+
+    /// ADMIN_ROLE check.
+    #[account(
+        seeds = [ROLE_SEED, mint.key().as_ref(), ADMIN_ROLE, signer.key().as_ref()],
+        bump,
+    )]
+    pub role_entry: Account<'info, RoleEntry>,
+
+    #[account(
+        mut,
+        seeds = [TOKEN_CONFIG_SEED, mint.key().as_ref()],
+        bump = token_config.bump,
+    )]
+    pub token_config: Account<'info, TokenConfig>,
+
+    pub mint: InterfaceAccount<'info, Mint>,
+}
+
+/// Two-step mint-authority handoff — step 2 (accept). The pending candidate signs to claim
+/// MintTokens; authority_pda signs the SetAuthority CPI moving it to the candidate. No
+/// ADMIN_ROLE account — the gate is that the signer equals the proposed candidate.
+#[derive(Accounts)]
+pub struct AcceptMintAuthority<'info> {
+    /// Must equal `token_config.pending_mint_authority`.
+    pub candidate: Signer<'info>,
+
+    #[account(
+        mut,
         seeds = [TOKEN_CONFIG_SEED, mint.key().as_ref()],
         bump = token_config.bump,
     )]

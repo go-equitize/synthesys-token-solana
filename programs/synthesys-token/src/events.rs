@@ -9,24 +9,32 @@ pub struct TokenMinted {
 
 /// Mirrors: event TokenBurned(address indexed from, uint256 amount)
 /// Emitted by burn(uint256) and burn(address,uint256).
+/// `from` is the owner; `from_token_account` disambiguates when the owner holds
+/// multiple token accounts for this mint.
 #[event]
 pub struct TokenBurned {
     pub from: Pubkey,
+    pub from_token_account: Pubkey,
     pub amount: u64,
 }
 
 /// Mirrors: event ForceBurn(address indexed account, uint256 amount)
+/// `account` is the owner; `token_account` is the specific account burned.
 #[event]
 pub struct ForceBurn {
     pub account: Pubkey,
+    pub token_account: Pubkey,
     pub amount: u64,
 }
 
 /// Mirrors: event TokenForcedTransferred(address indexed from, address indexed to, uint256 amount)
+/// `from`/`to` are owners; the `*_token_account` fields identify the moved accounts.
 #[event]
 pub struct TokenForcedTransferred {
     pub from: Pubkey,
     pub to: Pubkey,
+    pub from_token_account: Pubkey,
+    pub to_token_account: Pubkey,
     pub amount: u64,
 }
 
@@ -125,3 +133,21 @@ pub struct BridgeSendOpened {
 /// Emitted when post_bridge_restore closes the window (hook restored).
 #[event]
 pub struct BridgeSendClosed {}
+
+/// Emitted when transfer_mint_authority (one-step) or accept_mint_authority (two-step)
+/// hands the mint authority off from authority_pda. Makes an otherwise-irreversible
+/// handoff observable for post-hoc verification.
+#[event]
+pub struct MintAuthorityTransferred {
+    pub mint: Pubkey,
+    pub previous_authority: Pubkey,
+    pub new_authority: Pubkey,
+}
+
+/// Emitted when propose_mint_authority nominates a candidate for the two-step handoff.
+/// The authority does not move until the candidate calls accept_mint_authority.
+#[event]
+pub struct MintAuthorityProposed {
+    pub mint: Pubkey,
+    pub candidate: Pubkey,
+}

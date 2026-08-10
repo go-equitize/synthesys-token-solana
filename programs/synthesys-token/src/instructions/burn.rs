@@ -63,6 +63,7 @@ pub fn burn_self_handler(ctx: Context<BurnSelf>, amount: u64) -> Result<()> {
 
     emit!(TokenBurned {
         from: ctx.accounts.signer.key(),
+        from_token_account: ctx.accounts.signer_token_account.key(),
         amount,
     });
 
@@ -153,6 +154,7 @@ pub fn burn_account_handler(ctx: Context<BurnAccount>, amount: u64) -> Result<()
 
     emit!(TokenBurned {
         from: owner,
+        from_token_account: ctx.accounts.from_token_account.key(),
         amount,
     });
 
@@ -227,6 +229,7 @@ pub fn burn_from_handler(ctx: Context<BurnFrom>, amount: u64) -> Result<()> {
 
     emit!(TokenBurned {
         from: owner,
+        from_token_account: ctx.accounts.from_token_account.key(),
         amount,
     });
 

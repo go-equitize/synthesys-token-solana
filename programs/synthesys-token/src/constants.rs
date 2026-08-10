@@ -10,6 +10,8 @@ use anchor_lang::prelude::*;
 /// EXTRA_ACCOUNT_METAS_SEED → standard seed required by spl-transfer-hook-interface
 
 pub const TOKEN_CONFIG_SEED: &[u8] = b"token_config";
+/// Program-global singleton PDA holding an optional bootstrapped initializer authority.
+pub const PROGRAM_CONFIG_SEED: &[u8] = b"program_config";
 pub const WHITELIST_SEED: &[u8] = b"whitelist";
 pub const BLOCKLIST_SEED: &[u8] = b"blocklist";
 pub const ROLE_SEED: &[u8] = b"role";
@@ -43,3 +45,15 @@ pub const COMPUTE_BUDGET_PROGRAM_ID: Pubkey =
 /// `pre_bridge_send` / `post_bridge_restore` window — not just "any instruction
 /// on the router program."
 pub const CCIP_SEND_DISCRIMINATOR: [u8; 8] = [108, 216, 134, 191, 249, 234, 33, 84];
+
+/// Fixed account metas in `ccip_send` before its `remaining_accounts` region
+/// (per ccip-lib/svm/idl/ccip_router.json). Per-token blocks are appended after these.
+pub const CCIP_SEND_FIXED_ACCOUNTS: usize = 18;
+
+/// For a single-token send (token_indexes == [0]) the token block starts at
+/// remaining-account offset 0, so the debited user token account is this absolute index.
+/// SDK block layout: [user_token_account, ...] (ccip-lib .../send.ts buildTokenLookupAccounts).
+pub const CCIP_SEND_USER_TOKEN_ACCOUNT_INDEX: usize = CCIP_SEND_FIXED_ACCOUNTS;
+
+/// One `SVMTokenAmount` = pubkey(32) + u64 amount(8).
+pub const CCIP_SVM_TOKEN_AMOUNT_SIZE: usize = 32 + 8;

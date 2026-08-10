@@ -3,7 +3,7 @@ use anchor_lang::solana_program::program_option::COption;
 use anchor_spl::token_2022::spl_token_2022::{
     extension::{
         default_account_state::DefaultAccountState, permanent_delegate::PermanentDelegate,
-        transfer_hook::TransferHook, BaseStateWithExtensions, StateWithExtensions,
+        transfer_hook::TransferHook, BaseStateWithExtensions, ExtensionType, StateWithExtensions,
     },
     state::{AccountState, Mint as SplMint},
 };
@@ -12,7 +12,7 @@ use spl_transfer_hook_interface::instruction::ExecuteInstruction;
 
 use crate::{
     constants::*,
-    context::{InitExtraAccountMetaList, Initialize},
+    context::{InitExtraAccountMetaList, Initialize, SetInitializerAuthority},
     error::SynthesysTokenError,
     events::TokenInitialized,
 };
@@ -39,12 +39,20 @@ pub fn initialize_handler(
     // Mirrors: if (admin == address(0)) revert ZeroAddressAdmin();
     require!(admin != Pubkey::default(), SynthesysTokenError::ZeroAddressAdmin);
 
-    // ---- only the program upgrade authority may initialize ----
-    // Closes the initialization front-running / takeover window: even if mint creation
-    // and initialize() land in separate transactions, an attacker cannot claim admin
-    // because they are not the deployer (upgrade authority) of this program.
+    // ---- only the upgrade authority (or bootstrapped initializer) may initialize ----
+    // Closes the initialization front-running / takeover window. Also accepts a
+    // pre-set program_config.initializer_authority so onboarding survives revoking the
+    // upgrade authority (which would otherwise leave Some(revoked) matching no signer).
+    let authority_key = ctx.accounts.authority.key();
+    let is_upgrade_authority =
+        ctx.accounts.program_data.upgrade_authority_address == Some(authority_key);
+    let is_initializer = ctx
+        .accounts
+        .program_config
+        .as_ref()
+        .is_some_and(|pc| pc.initializer_authority == authority_key);
     require!(
-        ctx.accounts.program_data.upgrade_authority_address == Some(ctx.accounts.authority.key()),
+        is_upgrade_authority || is_initializer,
         SynthesysTokenError::Unauthorized
     );
 
@@ -90,6 +98,33 @@ pub fn initialize_handler(
             Option::<Pubkey>::from(transfer_hook.program_id) == Some(crate::ID),
             SynthesysTokenError::InvalidMintConfiguration
         );
+        // The hook authority must be authority_pda — it signs the transfer_hook `update`
+        // CPI in pre_bridge_send; a wrong/None authority makes the mint un-bridgeable.
+        require!(
+            Option::<Pubkey>::from(transfer_hook.authority) == Some(authority_pda_key),
+            SynthesysTokenError::InvalidMintConfiguration
+        );
+
+        // Reject any extension outside the compliant design. A transfer- or
+        // supply-mutating extension (TransferFeeConfig, InterestBearingConfig, ...) would
+        // move value outside this program's compliance model and break 1:1 CCIP supply.
+        const ALLOWED_EXTENSIONS: &[ExtensionType] = &[
+            ExtensionType::MintCloseAuthority,
+            ExtensionType::PermanentDelegate,
+            ExtensionType::DefaultAccountState,
+            ExtensionType::TransferHook,
+            ExtensionType::MetadataPointer,
+            ExtensionType::TokenMetadata,
+        ];
+        for ext in mint_state
+            .get_extension_types()
+            .map_err(|_| error!(SynthesysTokenError::InvalidMintConfiguration))?
+        {
+            require!(
+                ALLOWED_EXTENSIONS.contains(&ext),
+                SynthesysTokenError::DisallowedMintExtension
+            );
+        }
     }
 
     let bump = ctx.bumps.token_config;
@@ -109,6 +144,8 @@ pub fn initialize_handler(
     // last-holder guard in revoke_role accurate from the very first grant.
     config.default_admin_count = 1;
     config.admin_count = 1;
+    // No mint-authority handoff proposed yet.
+    config.pending_mint_authority = None;
 
     emit!(TokenInitialized {
         mint: ctx.accounts.mint.key(),
@@ -116,6 +153,30 @@ pub fn initialize_handler(
         ccip_admin,
         whitelist_enabled,
     });
+
+    Ok(())
+}
+
+/// Sets the bootstrapped initializer authority (once), gated to the current program
+/// upgrade authority. Lets the operator seat an initializer that can onboard future
+/// mints even after the upgrade authority is revoked for an immutable-program posture.
+pub fn set_initializer_authority_handler(
+    ctx: Context<SetInitializerAuthority>,
+    initializer_authority: Pubkey,
+) -> Result<()> {
+    require!(
+        ctx.accounts.program_data.upgrade_authority_address
+            == Some(ctx.accounts.authority.key()),
+        SynthesysTokenError::Unauthorized
+    );
+    require!(
+        initializer_authority != Pubkey::default(),
+        SynthesysTokenError::ZeroAddressAdmin
+    );
+
+    let config = &mut ctx.accounts.program_config;
+    config.initializer_authority = initializer_authority;
+    config.bump = ctx.bumps.program_config;
 
     Ok(())
 }

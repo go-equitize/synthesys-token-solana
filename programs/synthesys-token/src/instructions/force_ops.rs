@@ -96,6 +96,7 @@ pub fn force_burn_handler(ctx: Context<ForceBurnTokens>, amount: u64) -> Result<
 
     emit!(ForceBurn {
         account: target_owner,
+        token_account: ctx.accounts.target_token_account.key(),
         amount,
     });
 
@@ -328,6 +329,8 @@ pub fn forced_transfer_handler(ctx: Context<ForcedTransfer>, amount: u64) -> Res
     emit!(TokenForcedTransferred {
         from: from_owner,
         to: to_owner,
+        from_token_account: ctx.accounts.from_token_account.key(),
+        to_token_account: ctx.accounts.to_token_account.key(),
         amount,
     });
 

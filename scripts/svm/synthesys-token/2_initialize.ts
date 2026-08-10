@@ -110,6 +110,7 @@ async function main() {
       defaultAdminRoleEntry: defaultAdminRole,
       authorityPda,
       programData,
+      programConfig: null,
       systemProgram: anchor.web3.SystemProgram.programId,
     })
     .signers([wallet])

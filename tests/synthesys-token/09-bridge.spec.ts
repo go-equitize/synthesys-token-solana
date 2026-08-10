@@ -45,18 +45,23 @@ describe("synthesys-token", () => {
       );
     });
 
-    it("[disabled] happy path: pre+post in one tx toggles the hook off then back on", async () => {
+    it("[disabled] rejects a bridge window with no ccip_send (BridgeSendMissing)", async () => {
       await setRouter(ctx.off);
       // Fresh actors so this test owns its state (earlier tests leave some ATAs frozen).
       const bridgeUser = Keypair.generate();
       const dstUser = Keypair.generate();
       const ata = await createATA(provider, admin, bridgeUser.publicKey, ctx.off.mint.publicKey);
 
+      // A window that opens the hook-off gap but performs no bridging is now rejected —
+      // the hook is never toggled because the whole tx reverts atomically.
       const preIx = await program.methods.preBridgeSend().accounts(preAccounts(ctx.off, bridgeUser.publicKey, ata, null) as any).instruction();
       const postIx = await program.methods.postBridgeRestore().accounts(postAccounts(ctx.off) as any).instruction();
-      await provider.sendAndConfirm(new Transaction().add(preIx).add(postIx), [admin, bridgeUser]);
+      await expectRevert(
+        provider.sendAndConfirm(new Transaction().add(preIx).add(postIx), [admin, bridgeUser]),
+        "BridgeSendMissing",
+      );
 
-      // Prove the hook is fully restored: a normal hook-mediated transfer still works.
+      // The hook still enforces on a normal (non-bridge) transfer.
       const src = await ensureFunded(ctx.off, bridgeUser, 10_000); // fresh → minted → thawed
       const dst = await ensureFunded(ctx.off, dstUser, 1);
       const ix = await buildTransferWithHookIx(provider.connection, src, ctx.off.mint.publicKey, dst, bridgeUser.publicKey, BigInt(1_000), 6);
@@ -103,11 +108,14 @@ describe("synthesys-token", () => {
       );
     });
 
-    it("[enabled] happy path: whitelisted signer, pre+post in one tx", async () => {
+    it("[enabled] rejects a bridge window with no ccip_send even for a whitelisted signer (BridgeSendMissing)", async () => {
       const ata = await createATA(provider, admin, alice.publicKey, ctx.on.mint.publicKey);
       const preIx = await program.methods.preBridgeSend().accounts(preAccounts(ctx.on, alice.publicKey, ata, whitelistPda(ctx.on.mint.publicKey, alice.publicKey, program.programId)) as any).instruction();
       const postIx = await program.methods.postBridgeRestore().accounts(postAccounts(ctx.on) as any).instruction();
-      await provider.sendAndConfirm(new Transaction().add(preIx).add(postIx), [admin, alice]);
+      await expectRevert(
+        provider.sendAndConfirm(new Transaction().add(preIx).add(postIx), [admin, alice]),
+        "BridgeSendMissing",
+      );
     });
 
     // -------------------------------------------------------------------------

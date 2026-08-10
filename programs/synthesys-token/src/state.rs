@@ -67,6 +67,28 @@ pub struct TokenConfig {
     /// pause/list/force-ops/CCIP-config administration (recoverable only by a
     /// DEFAULT_ADMIN_ROLE re-grant, but better prevented outright).
     pub admin_count: u32,
+    /// Pending mint-authority candidate for the optional two-step handoff
+    /// (`propose_mint_authority` → `accept_mint_authority`). `Some(candidate)` after an
+    /// ADMIN proposes; cleared to `None` once the candidate accepts. `authority_pda` keeps
+    /// MintTokens for the whole interval, so a mistyped destination is recoverable (just
+    /// re-propose) until the real recipient confirms by signing. The one-step
+    /// `transfer_mint_authority` remains for PDA pool signers that cannot sign an accept.
+    pub pending_mint_authority: Option<Pubkey>,
+}
+
+/// Program-global bootstrap config (singleton PDA, seeds [PROGRAM_CONFIG_SEED]).
+///
+/// `initializer_authority` may be set once by the program upgrade authority before it is
+/// revoked, letting `initialize()` accept that key as an alternative to the (possibly
+/// revoked) upgrade authority — so onboarding future mints survives an "immutable program"
+/// revocation.
+#[account]
+#[derive(InitSpace)]
+pub struct ProgramConfig {
+    /// Authority permitted to call initialize() alongside the upgrade authority.
+    pub initializer_authority: Pubkey,
+    /// Canonical bump for this PDA.
+    pub bump: u8,
 }
 
 /// Whitelist entry for one address on one mint.

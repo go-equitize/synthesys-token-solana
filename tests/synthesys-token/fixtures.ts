@@ -186,6 +186,7 @@ async function setupMode(whitelistEnabled: boolean, label: string): Promise<Mode
       burnerRoleEntry: burnerRolePda,
       defaultAdminRoleEntry: defaultAdminRolePda,
       authorityPda,
+      programConfig: null,
       systemProgram: SystemProgram.programId,
     } as any)
     .rpc();

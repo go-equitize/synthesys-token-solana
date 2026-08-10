@@ -1,4 +1,8 @@
 use anchor_lang::prelude::*;
+use anchor_spl::token_2022::spl_token_2022::{
+    extension::{transfer_hook::TransferHookAccount, BaseStateWithExtensions, StateWithExtensions},
+    state::Account as SplTokenAccount,
+};
 
 use crate::{constants::*, context::Execute, error::SynthesysTokenError};
 
@@ -28,6 +32,12 @@ use crate::{constants::*, context::Execute, error::SynthesysTokenError};
 ///   [5] token_config           [6] from_whitelist   [7] from_blocklist
 ///   [8] to_whitelist           [9] to_blocklist    [10] authority_whitelist  [11] authority_blocklist
 pub fn execute_transfer_hook(ctx: Context<Execute>, _amount: u64) -> Result<()> {
+    // ---- Reject direct/standalone calls ----
+    // The handler is a public program instruction; Token-2022 sets the source account's
+    // `transferring` flag only for the duration of a real transfer_checked CPI, so this
+    // rejects arbitrary caller-crafted invocations that never enter the token program.
+    require_in_transfer(&ctx.accounts.source_token_account)?;
+
     // ---- Bypass for forcedTransfer (mirrors super._update()) ----
     if ctx.accounts.token_config.bypassing_compliance {
         return Ok(());
@@ -84,6 +94,23 @@ pub fn execute_transfer_hook(ctx: Context<Execute>, _amount: u64) -> Result<()> 
         )?;
     }
 
+    Ok(())
+}
+
+/// Ensures execution is inside a genuine Token-2022 transfer: the source account's
+/// TransferHookAccount `transferring` flag is set by the token program only for the
+/// duration of a transfer_checked CPI, so a standalone/direct call fails here.
+fn require_in_transfer(source_token_account: &UncheckedAccount) -> Result<()> {
+    let data = source_token_account.try_borrow_data()?;
+    let state = StateWithExtensions::<SplTokenAccount>::unpack(&data)
+        .map_err(|_| error!(SynthesysTokenError::InvalidTokenAccount))?;
+    let ext = state
+        .get_extension::<TransferHookAccount>()
+        .map_err(|_| error!(SynthesysTokenError::InvalidTokenAccount))?;
+    require!(
+        bool::from(ext.transferring),
+        SynthesysTokenError::HookNotInTransfer
+    );
     Ok(())
 }
 

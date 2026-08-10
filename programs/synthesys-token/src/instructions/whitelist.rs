@@ -6,6 +6,7 @@ use crate::{
     context::{AddWhitelist, RemoveWhitelist},
     error::SynthesysTokenError,
     events::{AddressRemovedFromWhitelist, AddressWhitelisted},
+    util::freeze_owner_token_accounts,
 };
 
 /// Mirrors: function addWhitelistAccount(address account) public onlyRole(ADMIN) in Whitelist.sol
@@ -35,7 +36,10 @@ pub fn add_whitelist_handler(ctx: Context<AddWhitelist>, account: Pubkey) -> Res
 /// new accounts and their existing token account is frozen immediately.
 ///
 /// Rejected with `WhitelistNotEnabled` on a blocklist-only mint.
-pub fn remove_whitelist_handler(ctx: Context<RemoveWhitelist>, account: Pubkey) -> Result<()> {
+pub fn remove_whitelist_handler<'info>(
+    ctx: Context<'_, '_, '_, 'info, RemoveWhitelist<'info>>,
+    account: Pubkey,
+) -> Result<()> {
     require!(
         ctx.accounts.token_config.whitelist_enabled,
         SynthesysTokenError::WhitelistNotEnabled
@@ -77,6 +81,18 @@ pub fn remove_whitelist_handler(ctx: Context<RemoveWhitelist>, account: Pubkey) 
             ),
         )?;
     }
+
+    // Freeze any sibling token accounts the owner holds for this mint, passed as
+    // remaining accounts — otherwise a thaw made while compliant persists on siblings
+    // after de-whitelisting and stays movable in the hook-off bridge window.
+    freeze_owner_token_accounts(
+        ctx.remaining_accounts,
+        &ctx.accounts.mint.to_account_info(),
+        &ctx.accounts.authority_pda.to_account_info(),
+        &ctx.accounts.token_program.to_account_info(),
+        account,
+        authority_bump,
+    )?;
 
     emit!(AddressRemovedFromWhitelist { account });
     Ok(())

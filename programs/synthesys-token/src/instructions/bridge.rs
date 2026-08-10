@@ -1,4 +1,5 @@
 use anchor_lang::prelude::*;
+use anchor_lang::solana_program::instruction::{get_stack_height, TRANSACTION_LEVEL_STACK_HEIGHT};
 use anchor_lang::solana_program::program::invoke_signed;
 use anchor_lang::solana_program::sysvar::instructions::{
     load_current_index_checked, load_instruction_at_checked,
@@ -12,6 +13,49 @@ use crate::{
     events::{BridgeSendClosed, BridgeSendOpened},
     util::enforce_whitelist,
 };
+
+/// Asserts the router `ccip_send` bridges exactly one token with `token_indexes == [0]`,
+/// so it debits `remaining_accounts[0]` == account index CCIP_SEND_USER_TOKEN_ACCOUNT_INDEX.
+/// Every arg before `token_indexes` is length-prefixed Borsh and skipped without decode:
+/// disc(8), dest_chain_selector u64(8), message{ receiver bytes, data bytes,
+/// token_amounts Vec<SVMTokenAmount>, fee_token pubkey(32), extra_args bytes },
+/// token_indexes bytes. Fails closed on any malformed / multi-token / non-zero-index data.
+fn require_single_token_send_to_offset_zero(data: &[u8]) -> Result<()> {
+    fn read_len(data: &[u8], off: usize) -> Option<(usize, usize)> {
+        let end = off.checked_add(4)?;
+        let len = u32::from_le_bytes(data.get(off..end)?.try_into().ok()?) as usize;
+        Some((len, end))
+    }
+    fn skip_bytes(data: &[u8], off: usize) -> Option<usize> {
+        let (len, off) = read_len(data, off)?;
+        off.checked_add(len)
+    }
+
+    let ok = (|| -> Option<()> {
+        let mut off = CCIP_SEND_DISCRIMINATOR.len();
+        off = off.checked_add(8)?; // dest_chain_selector
+        off = skip_bytes(data, off)?; // message.receiver
+        off = skip_bytes(data, off)?; // message.data
+        let (n_tokens, after_len) = read_len(data, off)?; // message.token_amounts
+        if n_tokens != 1 {
+            return None;
+        }
+        off = after_len.checked_add(n_tokens.checked_mul(CCIP_SVM_TOKEN_AMOUNT_SIZE)?)?;
+        off = off.checked_add(32)?; // message.fee_token
+        off = skip_bytes(data, off)?; // message.extra_args
+        let (n_idx, after_idx_len) = read_len(data, off)?; // token_indexes
+        if n_idx != 1 || *data.get(after_idx_len)? != 0 {
+            return None;
+        }
+        (after_idx_len.checked_add(1)? == data.len()).then_some(()) // no trailing bytes
+    })();
+
+    require!(
+        ok.is_some(),
+        SynthesysTokenError::UnexpectedCcipSendAccountLayout
+    );
+    Ok(())
+}
 
 /// Opens a compliant CCIP bridge-send window.
 ///
@@ -82,6 +126,14 @@ pub fn pre_bridge_send_handler(ctx: Context<PreBridgeSend>) -> Result<()> {
     );
 
     // ---- Transaction introspection: enforce pairing + sandwich guard ----
+    // The walker reads only top-level instructions via the sysvar, so a nested-CPI
+    // caller would present a smaller view than the real tx. Require top-level.
+    require!(
+        get_stack_height() == TRANSACTION_LEVEL_STACK_HEIGHT,
+        SynthesysTokenError::BridgeCallerMustBeTopLevel
+    );
+
+    let source_token_account_key = ctx.accounts.source_token_account.key();
     let ixs_sysvar = &ctx.accounts.instructions_sysvar.to_account_info();
     let current_index = load_current_index_checked(ixs_sysvar)?;
     let post_restore_discriminator = crate::instruction::PostBridgeRestore::DISCRIMINATOR;
@@ -90,6 +142,7 @@ pub fn pre_bridge_send_handler(ctx: Context<PreBridgeSend>) -> Result<()> {
         .checked_add(1)
         .ok_or(SynthesysTokenError::ArithmeticOverflow)?;
     let mut found_restore = false;
+    let mut found_send = false;
 
     loop {
         let Ok(ix) = load_instruction_at_checked(index as usize, ixs_sysvar) else {
@@ -113,15 +166,37 @@ pub fn pre_bridge_send_handler(ctx: Context<PreBridgeSend>) -> Result<()> {
         let is_compute_budget = ix.program_id == COMPUTE_BUDGET_PROGRAM_ID;
         let is_router_send =
             ix.program_id == router_program_id && ix.data.starts_with(&CCIP_SEND_DISCRIMINATOR);
-        require!(
-            is_compute_budget || is_router_send,
-            SynthesysTokenError::DisallowedInstructionInBridgeWindow
-        );
+
+        if is_router_send {
+            // One caller compliance check gates exactly one outbound send.
+            require!(!found_send, SynthesysTokenError::MultipleSendsInBridgeWindow);
+            found_send = true;
+
+            // Bind the send to its account layout + token routing (not just the 8-byte
+            // discriminator) and force the debited account to the one we ownership-checked.
+            require_single_token_send_to_offset_zero(&ix.data)?;
+            require!(
+                ix.accounts.len() > CCIP_SEND_USER_TOKEN_ACCOUNT_INDEX,
+                SynthesysTokenError::UnexpectedCcipSendAccountLayout
+            );
+            let debited = &ix.accounts[CCIP_SEND_USER_TOKEN_ACCOUNT_INDEX];
+            require!(
+                debited.pubkey == source_token_account_key && debited.is_writable,
+                SynthesysTokenError::BridgeSourceAccountMismatch
+            );
+        } else {
+            require!(
+                is_compute_budget,
+                SynthesysTokenError::DisallowedInstructionInBridgeWindow
+            );
+        }
 
         index = index.checked_add(1).ok_or(SynthesysTokenError::ArithmeticOverflow)?;
     }
 
     require!(found_restore, SynthesysTokenError::MissingPostBridgeRestore);
+    // Never toggle the hook off for a window that performs no bridging.
+    require!(found_send, SynthesysTokenError::BridgeSendMissing);
 
     // ---- Disable the transfer hook for the duration of this transaction ----
     let authority_bump = ctx.accounts.token_config.authority_bump;

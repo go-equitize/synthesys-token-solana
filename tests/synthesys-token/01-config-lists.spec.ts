@@ -47,6 +47,7 @@ describe("synthesys-token", () => {
             burnerRoleEntry: rolePda(m, BURNER_ROLE, zero, programId),
             defaultAdminRoleEntry: rolePda(m, DEFAULT_ADMIN_ROLE, zero, programId),
             authorityPda: findPDA([AUTHORITY_SEED, m.toBuffer()], programId)[0],
+            programConfig: null,
             systemProgram: SystemProgram.programId,
           } as any)
           .rpc(),
@@ -68,6 +69,7 @@ describe("synthesys-token", () => {
             burnerRoleEntry: ctx.on.burnerRolePda,
             defaultAdminRoleEntry: ctx.on.defaultAdminRolePda,
             authorityPda: ctx.on.authorityPda,
+            programConfig: null,
             systemProgram: SystemProgram.programId,
           } as any)
           .rpc(),

@@ -5,9 +5,14 @@ use anchor_lang::solana_program::{
     program::{invoke, invoke_signed},
     system_instruction,
 };
+use anchor_spl::token_2022::spl_token_2022::{
+    extension::StateWithExtensions,
+    state::{Account as SplTokenAccount, AccountState},
+};
+use anchor_spl::token_interface::{freeze_account, FreezeAccount};
 
 use crate::{
-    constants::{BLOCKLIST_SEED, WHITELIST_SEED},
+    constants::{AUTHORITY_SEED, BLOCKLIST_SEED, WHITELIST_SEED},
     error::SynthesysTokenError,
 };
 
@@ -79,6 +84,63 @@ pub fn enforce_not_blocklisted<'info>(
     );
     if !blocklist.data_is_empty() {
         return Err(blocked_err.into());
+    }
+
+    Ok(())
+}
+
+/// Freeze every additional token account in `remaining` that belongs to `owner` on this
+/// mint, signed by the authority PDA. A single wallet may hold multiple token accounts
+/// for one mint; blocklist / de-whitelist must cover all of them, not just the one passed
+/// as `target_token_account`. Each account is verified to be a token account of this token
+/// program, of this `mint`, owned by `owner` before freezing; already-frozen accounts are
+/// skipped. Passing no remaining accounts is a no-op.
+pub fn freeze_owner_token_accounts<'info>(
+    remaining: &[AccountInfo<'info>],
+    mint: &AccountInfo<'info>,
+    authority_pda: &AccountInfo<'info>,
+    token_program: &AccountInfo<'info>,
+    owner: Pubkey,
+    authority_bump: u8,
+) -> Result<()> {
+    let mint_key = mint.key();
+    let signer_seeds: &[&[&[u8]]] = &[&[AUTHORITY_SEED, mint_key.as_ref(), &[authority_bump]]];
+
+    for account in remaining {
+        require_keys_eq!(
+            *account.owner,
+            token_program.key(),
+            SynthesysTokenError::InvalidTokenAccount
+        );
+
+        let needs_freeze = {
+            let data = account.try_borrow_data()?;
+            let state = StateWithExtensions::<SplTokenAccount>::unpack(&data)
+                .map_err(|_| error!(SynthesysTokenError::InvalidTokenAccount))?;
+            require_keys_eq!(
+                state.base.mint,
+                mint_key,
+                SynthesysTokenError::InvalidTokenAccount
+            );
+            require_keys_eq!(
+                state.base.owner,
+                owner,
+                SynthesysTokenError::TokenAccountOwnerMismatch
+            );
+            state.base.state != AccountState::Frozen
+        };
+
+        if needs_freeze {
+            freeze_account(CpiContext::new_with_signer(
+                token_program.clone(),
+                FreezeAccount {
+                    account: account.clone(),
+                    mint: mint.clone(),
+                    authority: authority_pda.clone(),
+                },
+                signer_seeds,
+            ))?;
+        }
     }
 
     Ok(())
