@@ -79,7 +79,7 @@ use instructions::*;
 
 // IMPORTANT: Replace with real program ID after first `anchor build` or
 // `anchor keys sync`. Generated fresh for this program.
-declare_id!("7rCrfZnJakWfGfUmHovVGWFvwxnELfxnXzebmatjXeHp");
+declare_id!("7gusxR8KKXLyAHgwCJ1zvg92dkb7aJJCAQ8BFZm2CJ7m");
 
 #[program]
 pub mod SynthesysToken {
